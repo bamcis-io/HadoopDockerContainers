@@ -1,0 +1,144 @@
+ARG JAVA_VERSION=8
+
+FROM openjdk:${JAVA_VERSION}-slim
+
+MAINTAINER Michael Haken michael.haken@outlook.com
+
+SHELL ["/bin/bash", "-c"]
+
+ARG HADOOP_VERSION="3.0.0"
+ARG HADOOP_BASE_PATH="/opt/hadoop"
+ARG DISABLE_IPV6="true"
+ARG HADOOP_USER="hdadmin"
+
+ENV HADOOP_HOME="${HADOOP_BASE_PATH}" \
+	HADOOP_PREFIX="${HADOOP_BASE_PATH}" \
+	HADOOP_LOG_DIR="${HADOOP_BASE_PATH}/logs" \
+	PATH="${PATH}:${HADOOP_BASE_PATH}/bin:${HADOOP_BASE_PATH}/sbin:${JAVA_HOME}/bin" \
+	HADOOP_USER="{HADOOP_USER}"
+
+RUN DEBIAN_FRONTEND="noninteractive" \
+	&& apt-get update \
+	&& apt-get -y upgrade \
+	&& apt-get install --assume-yes wget bash openssh-client openssh-server \
+	#
+	# Make sure JAVA_HOME and HADOOP_HOME is included for all bash users
+	#
+	&& echo "export JAVA_HOME=${JAVA_HOME}" > /etc/profile.d/java.sh \
+	&& echo "export HADOOP_HOME=${HADOOP_HOME}" > /etc/profile.d/hadoop.sh \
+	#
+	# Setup ssh folder for hdadmin
+	#
+	&& mkdir -p /home/"${HADOOP_USER}" \
+	&& mkdir -p /home/"${HADOOP_USER}"/.ssh \
+	&& touch /home/"${HADOOP_USER}"/.ssh/authorized_keys \
+	&& touch /home/"${HADOOP_USER}"/.ssh/config \
+	&& touch /home/"${HADOOP_USER}"/.ssh/known_hosts \
+	#
+	# Add the group and user for running the hadoop services
+	#
+	&& addgroup --system hadoop \
+	# Set the shell the /bin/bash so that SSH access later will work
+	# Use -gecos "" to bypass prompts
+	&& adduser --system --ingroup hadoop --home /home/"${HADOOP_USER}" --shell /bin/bash --disabled-password --gecos "" "${HADOOP_USER}" \
+	# Required to prevent the sshd[29]: User hdadmin not allowed because account is locked error
+	# Setting the password to '*' makes the user unable to login using a unix based password
+	&& usermod -p '*' "${HADOOP_USER}" \
+	#
+	# Make sure the hdadmin account has access to all of its content
+	#
+	&& chown -R "${HADOOP_USER}":"${HADOOP_USER}" /home/"${HADOOP_USER}" \
+	&& chmod -R 0700 /home/"${HADOOP_USER}" \
+	#
+	# Setup host keys, these are missing in Alpine and are required
+	# so that the server can identify itself to users SSH'ing to it
+	#
+	&& ssh-keygen -A \
+	#
+	# Setup ssh keys for hdadmin
+	#
+	&& su --login "${HADOOP_USER}" --command "ssh-keygen -q -N '' -t rsa -f /home/${HADOOP_USER}/.ssh/id_rsa" \
+	&& cat /home/"${HADOOP_USER}"/.ssh/id_rsa.pub >> /home/"${HADOOP_USER}"/.ssh/authorized_keys \
+	#
+	# Setup known hosts so that no interactive session is required to accept the host's key during SSH
+	#
+	&& HOST_KEY="$(cat /etc/ssh/ssh_host_rsa_key.pub)" \
+	&& echo "127.0.0.1 ${HOST_KEY}" >> /home/"${HADOOP_USER}"/.ssh/known_hosts \
+	&& echo "localhost ${HOST_KEY}" >> /home/"${HADOOP_USER}"/.ssh/known_hosts \
+	&& echo "$HOSTNAME ${HOST_KEY}" >> /home/"${HADOOP_USER}"/.ssh/known_hosts \
+	&& echo "0.0.0.0 ${HOST_KEY}"   >> /home/"${HADOOP_USER}"/.ssh/known_hosts \
+	#
+	# Set up an SSH config file to specify the default preferences
+	#
+	&& echo "Host *" >> /home/"${HADOOP_USER}"/.ssh/config \
+	&& echo -e "\tUser ${HADOOP_USER}" >> /home/"${HADOOP_USER}"/.ssh/config \
+	&& echo -e "\tPubKeyAuthentication yes" >> /home/"${HADOOP_USER}"/.ssh/config \
+	&& echo -e "\tIdentityFile /home/${HADOOP_USER}/.ssh/id_rsa" >> /home/"${HADOOP_USER}"/.ssh/config \
+	#
+	# Make using the key file not require the use of a passphrase to access (if one was configured)
+	#
+	&& eval $(ssh-agent) \
+	&& ssh-add /home/"${HADOOP_USER}"/.ssh/id_rsa \
+	#
+	# Reset all permissions
+	#
+	&& chmod 0700 /home/"${HADOOP_USER}" \
+	&& chmod 0700 /home/"${HADOOP_USER}"/.ssh \
+	&& chmod 0600 /home/"${HADOOP_USER}"/.ssh/* \
+	&& chmod 0640 /home/"${HADOOP_USER}"/.ssh/*.pub \
+	#
+	# Add these environment variables for hdadmin to use from bash
+	#
+	&& echo "export HADOOP_HOME=${HADOOP_HOME}" >> /home/"${HADOOP_USER}"/.bashrc \
+	&& echo "export PATH=${PATH}" >> /home/"${HADOOP_USER}"/.bashrc \
+	&& echo "export JAVA_HOME=${JAVA_HOME}" >> /home/"${HADOOP_USER}"/.bashrc \
+	&& source /home/"${HADOOP_USER}"/.bashrc \
+	#
+	# Add these environment variables for hdadmin to use from any shell
+	#
+	&& echo "export HADOOP_HOME=${HADOOP_HOME}" >> /home/"${HADOOP_USER}"/.profile \
+	&& echo "export PATH=${PATH}" >> /home/"${HADOOP_USER}"/.profile \
+	&& echo "export JAVA_HOME=${JAVA_HOME}" >> /home/"${HADOOP_USER}"/.profile \
+	&& source /home/"${HADOOP_USER}"/.profile \
+	#
+	# As of v3.0.0 Hadoop does not support IPv6
+	#
+	&& if [ "${DISABLE_IPV6}" = "true" ]; then echo "net.ipv6.conf.all.disable_ipv6 = 1" >> /etc/sysctl.conf; echo "net.ipv6.conf.default.disable_ipv6 = 1" >> /etc/sysctl.conf; echo "net.ipv6.conf.lo.disable_ipv6 = 1" >> /etc/sysctl.conf; fi \
+	#
+	# Create the directories for hadoop
+	#
+	&& mkdir -p "${HADOOP_HOME}" \
+	&& mkdir -p "${HADOOP_LOG_DIR}" \
+	#
+	# -O- output payload to stdout, and use -q to supress all wget
+	# output, so only tar file is sent down the pipeline
+	#
+	&& wget -qO- "http://mirrors.sorengard.com/apache/hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}.tar.gz" \
+	#
+	# Use --strip 1 to remove the first folder from the file names
+	# which is apache-hadoop-${HADOOP_VERSION} so that we properly create the
+	# folder structure in /opt/hadoop
+	# -f - specifies that the archive location is from the pipeline
+	#
+	| tar -zx -f - --directory "${HADOOP_HOME}" --strip 1 \
+	#
+	# Make sure the hdadmin user and hadoop group owns all of the necessary directories
+    #
+	&& chown -R "${HADOOP_USER}":hadoop "${HADOOP_HOME}" "${HADOOP_LOG_DIR}" \
+	&& chmod -R 0774 "${HADOOP_HOME}" "${HADOOP_LOG_DIR}" \
+	#
+	# Add the required environment variables to the hadoop-env.sh script
+	#
+	&& if grep -q -e "^.*export\s\+JAVA_HOME\s*=" "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; then sed -i "s|^.*export\s\+JAVA_HOME.*|export JAVA_HOME=${JAVA_HOME}|g" "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; else echo "export JAVA_HOME=${JAVA_HOME}" >> "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; fi \
+	&& if grep -q -e "^.*export\s\+HADOOP_HOME\s*=" "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; then sed -i "s|^.*export\s\+HADOOP_HOME.*|export HADOOP_HOME=${HADOOP_HOME}|g" "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; else echo "export HADOOP_HOME=${HADOOP_HOME}" >> "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; fi \
+	#
+	# Remove unneeded apt packages
+	#
+	&& apt-get remove --purge -y wget \
+	&& apt-get autoclean -y \
+	&& apt-get autoremove -y \
+	&& apt-get clean -y \
+	&& rm -rf /var/lib/apt/lists/*
+
+# Hadoop uses port 22 for all management of nodes
+EXPOSE 22
