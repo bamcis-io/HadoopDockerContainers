@@ -1,6 +1,4 @@
-ARG JAVA_VERSION=8
-
-FROM openjdk:${JAVA_VERSION}-slim
+FROM bamcis/ca-debian:latest
 
 MAINTAINER Michael Haken michael.haken@outlook.com
 
@@ -14,9 +12,18 @@ ARG HADOOP_USER="hdadmin"
 ENV HADOOP_HOME="${HADOOP_BASE_PATH}" \
 	HADOOP_PREFIX="${HADOOP_BASE_PATH}" \
 	HADOOP_LOG_DIR="${HADOOP_BASE_PATH}/logs" \
+	HADOOP_USER="${HADOOP_USER}" \
 	PATH="${PATH}:${HADOOP_BASE_PATH}/bin:${HADOOP_BASE_PATH}/sbin:${JAVA_HOME}/bin" \
-	HADOOP_USER="{HADOOP_USER}"
+	URL="http://archive.apache.org/dist/hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}.tar.gz"
 
+RUN if [ -z "${HADOOP_VERSION}" ]; then \
+	echo "HADOOP_VERSION must be set." \
+	&& exit 1; \
+	fi
+
+#
+# Install packages used by hadoop and needed to run the basic OS setup
+# 
 RUN DEBIAN_FRONTEND="noninteractive" \
 	&& apt-get update \
 	&& apt-get -y upgrade \
@@ -25,15 +32,7 @@ RUN DEBIAN_FRONTEND="noninteractive" \
 	# Make sure JAVA_HOME and HADOOP_HOME is included for all bash users
 	#
 	&& echo "export JAVA_HOME=${JAVA_HOME}" > /etc/profile.d/java.sh \
-	&& echo "export HADOOP_HOME=${HADOOP_HOME}" > /etc/profile.d/hadoop.sh \
-	#
-	# Setup ssh folder for hdadmin
-	#
-	&& mkdir -p /home/"${HADOOP_USER}" \
-	&& mkdir -p /home/"${HADOOP_USER}"/.ssh \
-	&& touch /home/"${HADOOP_USER}"/.ssh/authorized_keys \
-	&& touch /home/"${HADOOP_USER}"/.ssh/config \
-	&& touch /home/"${HADOOP_USER}"/.ssh/known_hosts \
+	&& echo "export HADOOP_HOME=${HADOOP_HOME}" > /etc/profile.d/hadoop.sh \	
 	#
 	# Add the group and user for running the hadoop services
 	#
@@ -45,10 +44,17 @@ RUN DEBIAN_FRONTEND="noninteractive" \
 	# Setting the password to '*' makes the user unable to login using a unix based password
 	&& usermod -p '*' "${HADOOP_USER}" \
 	#
+	# Setup ssh keys directory
+	#
+	&& mkdir -p /home/"${HADOOP_USER}"/.ssh \
+	&& touch /home/"${HADOOP_USER}"/.ssh/authorized_keys \
+	&& touch /home/"${HADOOP_USER}"/.ssh/config \
+	&& touch /home/"${HADOOP_USER}"/.ssh/known_hosts \
+	#
 	# Make sure the hdadmin account has access to all of its content
 	#
-	&& chown -R "${HADOOP_USER}":"${HADOOP_USER}" /home/"${HADOOP_USER}" \
-	&& chmod -R 0700 /home/"${HADOOP_USER}" \
+	&& chown --recursive "${HADOOP_USER}" /home/"${HADOOP_USER}" \
+	&& chmod --recursive 0700 /home/"${HADOOP_USER}" \
 	#
 	# Setup host keys, these are missing in Alpine and are required
 	# so that the server can identify itself to users SSH'ing to it
@@ -107,30 +113,40 @@ RUN DEBIAN_FRONTEND="noninteractive" \
 	#
 	# Create the directories for hadoop
 	#
-	&& mkdir -p "${HADOOP_HOME}" \
-	&& mkdir -p "${HADOOP_LOG_DIR}" \
+	&& HADOOP_PARENT_DIR="$(dirname ${HADOOP_HOME})" \
+	&& mkdir -p "${HADOOP_PARENT_DIR}/hadoop-${HADOOP_VERSION}" \	
 	#
 	# -O- output payload to stdout, and use -q to supress all wget
 	# output, so only tar file is sent down the pipeline
 	#
-	&& wget -qO- "http://mirrors.sorengard.com/apache/hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}.tar.gz" \
+	&& echo "Downloading from $URL" \
+	&& wget -qO- "${URL}" \
 	#
-	# Use --strip 1 to remove the first folder from the file names
-	# which is apache-hadoop-${HADOOP_VERSION} so that we properly create the
-	# folder structure in /opt/hadoop
 	# -f - specifies that the archive location is from the pipeline
 	#
-	| tar -zx -f - --directory "${HADOOP_HOME}" --strip 1 \
+	| tar -zx -f - --directory "${HADOOP_PARENT_DIR}" \
+	&& ln -s "${HADOOP_PARENT_DIR}/hadoop-${HADOOP_VERSION}" "${HADOOP_HOME}" \
+	#
+	# Create the log directory for hadoop
+	#
+	&& mkdir -p "${HADOOP_LOG_DIR}" \
 	#
 	# Make sure the hdadmin user and hadoop group owns all of the necessary directories
-    #
-	&& chown -R "${HADOOP_USER}":hadoop "${HADOOP_HOME}" "${HADOOP_LOG_DIR}" \
-	&& chmod -R 0774 "${HADOOP_HOME}" "${HADOOP_LOG_DIR}" \
+	# Have to add the / after hadoop_home because it is a symlink and chown won't
+	# recurse the symlink
+	#
+	&& chown --recursive "${HADOOP_USER}":hadoop "${HADOOP_HOME}" "${HADOOP_HOME}/" "${HADOOP_LOG_DIR}" \
+	&& chmod --recursive 0774 "${HADOOP_HOME}" "${HADOOP_LOG_DIR}" \
 	#
 	# Add the required environment variables to the hadoop-env.sh script
 	#
 	&& if grep -q -e "^.*export\s\+JAVA_HOME\s*=" "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; then sed -i "s|^.*export\s\+JAVA_HOME.*|export JAVA_HOME=${JAVA_HOME}|g" "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; else echo "export JAVA_HOME=${JAVA_HOME}" >> "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; fi \
 	&& if grep -q -e "^.*export\s\+HADOOP_HOME\s*=" "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; then sed -i "s|^.*export\s\+HADOOP_HOME.*|export HADOOP_HOME=${HADOOP_HOME}|g" "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; else echo "export HADOOP_HOME=${HADOOP_HOME}" >> "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; fi \
+	#
+	# Fix error: Missing privilege separation directory: /run/sshd
+	#
+	&& mkdir -p /var/run/sshd \
+	&& chmod 0755 /var/run/sshd \
 	#
 	# Remove unneeded apt packages
 	#
