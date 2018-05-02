@@ -1,25 +1,46 @@
-FROM bamcis/alpine-protobuf:2.5.0
+FROM bamcis/ca-alpine:latest
 
 MAINTAINER Michael Haken michael.haken@outlook.com
 
 ARG HADOOP_VERSION
+ARG CLEANUP_FOLDER
 ARG HADOOP_BASE_PATH="/opt/hadoop"
 ARG DISABLE_IPV6="true"
 ARG HADOOP_USER="hdadmin"
+# Protobuf 2.5.0 (exactly this version) is required to build hadoop
+ARG PROTOBUF_VERSION=2.5.0
+ARG GOOGLETEST_VERSION=1.5.0    
 
 ENV HADOOP_HOME="${HADOOP_BASE_PATH}" \
 	HADOOP_PREFIX="${HADOOP_BASE_PATH}" \
 	HADOOP_LOG_DIR="${HADOOP_BASE_PATH}/logs" \
 	HADOOP_USER="${HADOOP_USER}" \
-	PATH="${PATH}:${HADOOP_BASE_PATH}/bin:${HADOOP_BASE_PATH}/sbin"
+	PATH="${PATH}:${HADOOP_BASE_PATH}/bin:${HADOOP_BASE_PATH}/sbin" \
+	URL="http://archive.apache.org/dist/hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}-src.tar.gz"
 
-RUN if [ -z "${HADOOP_VERSION}" ]; then echo "HADOOP_VERSION must be set."; exit 1; fi
+RUN if [ -z "${HADOOP_VERSION}" ]; then \
+	echo "HADOOP_VERSION must be set." \
+	&& exit 1; \
+	fi \
+	&& if [ -z "${CLEANUP_FOLDER}" ]; then \
+	echo "CLEANUP_FOLDER must be set." \
+	&& exit 1; \
+	fi
 
 #
 # Install packages used by hadoop and needed to run the basic OS setup
 # 
 RUN apk update \
 	&& apk add --no-cache \
+	#
+	# This fixes the ps: unrecognized option: p error
+	# when starting dfs
+	#
+	procps \
+	#
+	# Provides the expected chown that hadoop will use
+	#
+	coreutils \
 	wget \
 	bash \
 	tar \
@@ -69,8 +90,8 @@ RUN apk update \
 	#
 	# Make sure the hdadmin account has access to all of its content
 	#
-	&& chown -R "${HADOOP_USER}":"${HADOOP_USER}" /home/"${HADOOP_USER}" \
-	&& chmod -R 0700 /home/"${HADOOP_USER}" \
+	&& chown --recursive "${HADOOP_USER}" /home/"${HADOOP_USER}" \
+	&& chmod --recursive 0700 /home/"${HADOOP_USER}" \
 	#
 	# Setup host keys, these are missing in Alpine and are required
 	# so that the server can identify itself to users SSH'ing to it
@@ -122,14 +143,43 @@ RUN apk update \
 	#
 	&& if [ "${DISABLE_IPV6}" = "true" ]; then echo "net.ipv6.conf.all.disable_ipv6 = 1" >> /etc/sysctl.conf; echo "net.ipv6.conf.default.disable_ipv6 = 1" >> /etc/sysctl.conf; echo "net.ipv6.conf.lo.disable_ipv6 = 1" >> /etc/sysctl.conf; fi \
 	#
-	# Create the directories for hadoop
-	#
-	&& mkdir -p "${HADOOP_HOME}" \
-	&& mkdir -p "${HADOOP_LOG_DIR}" \
-	#
 	# Remove unneeded apk packages
 	#
 	&& apk del wget shadow tar
+
+#
+# Build protobuf library that is required
+# for hadoop to compile
+#
+RUN apk --no-cache add --virtual .builddeps \
+        autoconf \
+        automake \
+        build-base \
+		curl \
+        libtool \
+        zlib-dev \
+	&& mkdir -p /tmp/protobuf-src \
+	&& mkdir -p /tmp/protobuf-src/gtest \
+    && wget -qO- https://github.com/google/protobuf/archive/v${PROTOBUF_VERSION}.tar.gz \
+    | tar -xz -f - --directory /tmp/protobuf-src --strip 1 \
+    && cd /tmp/protobuf-src \
+    # Get google unit tests
+    && wget -q -O - https://github.com/google/googletest/archive/release-${GOOGLETEST_VERSION}.tar.gz \
+    | tar -xz -f - --directory /tmp/protobuf-src/gtest --strip 1 \
+    # Build the protobuf code
+    && ./autogen.sh \
+    && CXXFLAGS="$CXXFLAGS -fno-delete-null-pointer-checks" ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var \
+    && make \
+    && make check \
+    && make install \
+	&& protoc --version \
+	&& cd / \
+    && rm -rf /tmp/protobuf-src \
+	&& apk del .builddeps
+
+# Copy the appropriate cleanup file over to modify the source code
+# to fix errors during compilation
+COPY "${CLEANUP_FOLDER}"/cleanup.sh /tmp
 
 #
 # Install packages that will be used to build the hadoop source
@@ -158,46 +208,53 @@ RUN apk --no-cache add --virtual .builddeps \
         zlib-dev \
 		wget \
 		tar \
-		zstd-dev
-
-#
-# Get the source code and download to a temp directory
-#
-RUN mkdir -p /tmp/hadoop-src \
-	&& MIRROR_URL=$(wget -qO- "http://www.apache.org/dyn/closer.cgi/?as_json=1" | grep "preferred" | sed -n 's#.*"\(http://*[^"]*\)".*#\1#p') \
-	&& URL="${MIRROR_URL}hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}-src.tar.gz" \
-    && echo "Downloading from: ${URL}" \
+		zstd-dev \
+	#
+	# Get the source code and download to a temp directory
+	#
+	&& mkdir -p /tmp/hadoop-src \
+	#
+	# -O- output payload to stdout, and use -q to supress all wget
+	# output, so only tar file is sent down the pipeline
+	#
 	&& wget -qO- "${URL}" \
-    | tar -zx -f - --directory "/tmp/hadoop-src" --strip 1
-
-# Copy the appropriate cleanup file over to modify the source code
-# to fix errors during compilation
-COPY "$(echo ${HADOOP_VERSION} | sed 's/.$/x/')"/cleanup.sh /tmp
-
-#
-# Build the code
-#
-RUN /tmp/cleanup.sh "/tmp/hadoop-src" \
+    | tar -zx -f - --directory "/tmp/hadoop-src" --strip 1 \
+	&& /tmp/cleanup.sh "/tmp/hadoop-src" \
 	&& cd /tmp/hadoop-src \
     && mvn clean package -Pdist,native -DskipTests -DskipDocs -Dtar -e \
-    && tar -zxf "/tmp/hadoop-src/hadoop-dist/target/hadoop-${HADOOP_VERSION}.tar.gz" --directory "${HADOOP_HOME}" --strip 1 \
+	#
+	# Extract the compiled code, cleanup, and ensure permissions are set
+	#
+	&& HADOOP_PARENT_DIR="$(dirname ${HADOOP_HOME})" \
+	&& mkdir -p "${HADOOP_PARENT_DIR}/hadoop-${HADOOP_VERSION}" \
+    && tar -zxf "/tmp/hadoop-src/hadoop-dist/target/hadoop-${HADOOP_VERSION}.tar.gz" --directory "${HADOOP_PARENT_DIR}" \
+	&& ln -s "${HADOOP_PARENT_DIR}/hadoop-${HADOOP_VERSION}" "${HADOOP_HOME}" \
+	#
+	# Create the log directory for hadoop
+	#
+	&& mkdir -p "${HADOOP_LOG_DIR}" \
+	#
+	# Cleanup the temp files
+	#
 	&& cd / \
     && rm -rf /tmp/hadoop-* \
-	&& rm -f /tmp/cleanup.sh \
-	#
-	# Cleanup
-	#
-	&& apk del .builddeps \
+	&& rm -f /tmp/cleanup.sh \	
 	#
 	# Make sure the hdadmin user and hadoop group owns all of the necessary directories
-    #
-	&& chown -R "${HADOOP_USER}":hadoop "${HADOOP_HOME}" "${HADOOP_LOG_DIR}" \
-	&& chmod -R 0774 "${HADOOP_HOME}" "${HADOOP_LOG_DIR}" \
+	# Have to add the / after hadoop_home because it is a symlink and chown won't
+	# recurse the symlink
+	#
+	&& chown --recursive "${HADOOP_USER}":hadoop "${HADOOP_HOME}" "${HADOOP_HOME}/" "${HADOOP_LOG_DIR}" \
+	&& chmod --recursive 0774 "${HADOOP_HOME}" "${HADOOP_LOG_DIR}" \
 	#
 	# Add the required environment variables to the hadoop-env.sh script
 	#
 	&& if grep -q -e "^.*export\s\+JAVA_HOME\s*=" "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; then sed -i "s|^.*export\s\+JAVA_HOME.*|export JAVA_HOME=${JAVA_HOME}|g" "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; else echo "export JAVA_HOME=${JAVA_HOME}" >> "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; fi \
-	&& if grep -q -e "^.*export\s\+HADOOP_HOME\s*=" "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; then sed -i "s|^.*export\s\+HADOOP_HOME.*|export HADOOP_HOME=${HADOOP_HOME}|g" "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; else echo "export HADOOP_HOME=${HADOOP_HOME}" >> "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; fi
+	&& if grep -q -e "^.*export\s\+HADOOP_HOME\s*=" "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; then sed -i "s|^.*export\s\+HADOOP_HOME.*|export HADOOP_HOME=${HADOOP_HOME}|g" "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; else echo "export HADOOP_HOME=${HADOOP_HOME}" >> "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; fi \
+	#
+	# Cleanup
+	#
+	&& apk del .builddeps
 	
 # Hadoop uses port 22 for all management of nodes
 EXPOSE 22

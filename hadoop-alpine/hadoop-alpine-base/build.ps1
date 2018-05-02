@@ -4,4 +4,6 @@ Param(
 	[System.String]$Version
 )
 
-docker build ../hadoop-alpine-base -t "bamcis/hadoop-alpine-base:$Version" --build-arg HADOOP_VERSION=$Version
+$Cleanup = "$($Version.Remove($Version.Length - 1))x"
+
+docker build ../hadoop-alpine-base -t "bamcis/hadoop-alpine-base:$Version" -t "bamcis/hadoop-alpine-base:latest" --build-arg HADOOP_VERSION=$Version --build-arg CLEANUP_FOLDER=$Cleanup
