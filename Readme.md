@@ -18,8 +18,8 @@ successfully.
 There are serveral different versions of the `hadoop-*` containers.
 
 * **hadoop-*-base** - This container has just the Hadoop binaries installed, no configurations to the hadoop environment
-  have been performed. This is useful if you are installing another application that just requires the Hadoop jar files.
-* **haddoop-*-hdfs** - This container has HDFS setup but does not contain any configurations for MapReduce or YARN. 
+have been performed. This is useful if you are installing another application that just requires the Hadoop jar files.
+* **hadoop-*-hdfs** - This container has HDFS setup but does not contain any configurations for MapReduce or YARN. 
 * **hadoop-*-pseudo-distributed** - A fully operational pseudo distributed Hadoop setup.
 * **hadoop-*** - A container that can run a distributed hadoop cluster.
 
