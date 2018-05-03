@@ -1,0 +1,47 @@
+version: '3.3'
+
+services:
+  hadoop-hdfs-master:
+    image: bamcis/hadoop-alpine-hdfs:latest
+    container_name: hadoop-hdfs-master
+    ports:
+    - 8020:8020
+    - 9000:9000
+    - 50010:50010
+    - 50020:50020
+    - 50070:50070
+    - 50075:50075
+    - 50090:50090
+    - 50091:50091
+    - 50470:50470
+    - 50475:50475
+    - 9820:9820
+    - 9864:9864
+    - 9865:9865
+    - 9866:9866
+    - 9867:9867
+    - 9868:9869
+    - 9870:9870
+    - 9871:9871
+    environment:
+      ROLE: master
+      SLAVE_NODES: "hdfs-slave1,hdfs-slave2"
+      MASTER_NODE: hadoop-hdfs-master
+    networks:
+    - default
+  hdfs-slave1:
+    image: bamcis/hadoop-alpine-hdfs:latest
+    container_name: hdfs-slave1
+    environment:
+      ROLE: slave
+      MASTER_NODE: hadoop-hdfs-master
+    networks:
+    - default
+  hdfs-slave2:
+    image: bamcis/hadoop-alpine-hdfs:latest
+    container_name: hdfs-slave2
+    environment:
+      ROLE: slave
+      MASTER_NODE: hadoop-hdfs-master
+    networks:
+    - default

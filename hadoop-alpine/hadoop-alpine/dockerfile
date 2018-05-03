@@ -1,0 +1,45 @@
+ARG SOURCE="bamcis/hadoop-alpine-hdfs:latest"
+
+FROM "${SOURCE}"
+MAINTAINER Michael Haken michael.haken@outlook.com
+
+ARG HEAPSIZE="0"
+
+ENV HEAPSIZE="${HEAPSIZE}"
+
+COPY yarn-site.xml "${HADOOP_HOME}/etc/hadoop"
+COPY mapred-site.xml "${HADOOP_HOME}/etc/hadoop"
+COPY entrypoint.sh "/var/hadoop/entrypoint.sh"
+
+	#
+	# Fix the permissions on the files that were copied over
+	#
+RUN chown --recursive "${HADOOP_USER}":hadoop "${HADOOP_HOME}/etc/hadoop" \
+	&& chmod 0774 --recursive "${HADOOP_HOME}/etc/hadoop" \
+	&& if [ "${HEAPSIZE}" -gt 0 ]; then \
+		if grep -q -e "^.*export\s\+HADOOP_HEAPSIZE\s*=" "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; then \
+			sed -i "s|^.*export\s\+HADOOP_HEAPSIZE.*|export HADOOP_HEAPSIZE=${HEAPSIZE}|g" "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; \
+		else \
+			echo "export HADOOP_HEAPSIZE=${HEAPSIZE}" >> "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; \
+		fi \
+		&& if grep -q -e "^.*export\s\+HADOOP_NAMENODE_INIT_HEAPSIZE\s*=" "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; then \
+			sed -i "s|^.*export\s\+HADOOP_NAMENODE_INIT_HEAPSIZE.*|export HADOOP_NAMENODE_INIT_HEAPSIZE=${HEAPSIZE}|g" "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; \
+		else \
+			echo "export HADOOP_NAMENODE_INIT_HEAPSIZE=${HEAPSIZE}" >> "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh"; \
+		fi \
+		&& sed -i "s|^.*export\s\+HADOOP_JOB_HISTORYSERVER_HEAPSIZE.*|export HADOOP_JOB_HISTORYSERVER_HEAPSIZE=${HEAPSIZE}|g" "${HADOOP_HOME}/etc/hadoop/mapred-env.sh" \
+		# No else here since the mapred-env.sh uses logic to export the value and if we didn't find it, then
+		# that value is missing, i.e.
+		# if [ "$HADOOP_JOB_HISTORYSERVER_HEAPSIZE" = "" ]; then
+		#   export HADOOP_JOB_HISTORYSERVER_HEAPSIZE=1000
+		# fi
+		# Don't do this one globally since the script assigns to JAVA_HEAP_MAX later
+		&& sed -i "s/^#\?\s*JAVA_HEAP_MAX=.*/JAVA_HEAP_MAX=-Xmx${HEAPSIZE}m/" "${HADOOP_HOME}/etc/hadoop/yarn-env.sh" \
+		&& sed -i "s/^#\?\s*YARN_HEAPSIZE=.*/YARN_HEAPSIZE=${HEAPSIZE}/" "${HADOOP_HOME}/etc/hadoop/yarn-env.sh" \
+		&& cat "${HADOOP_HOME}/etc/hadoop/hadoop-env.sh" \
+		&& cat "${HADOOP_HOME}/etc/hadoop/mapred-env.sh" \
+		&& cat "${HADOOP_HOME}/etc/hadoop/yarn-env.sh" \
+	; \
+	fi
+	
+ENTRYPOINT ["/var/hadoop/entrypoint.sh"]

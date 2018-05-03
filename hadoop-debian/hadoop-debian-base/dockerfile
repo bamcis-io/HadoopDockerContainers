@@ -14,7 +14,8 @@ ENV HADOOP_HOME="${HADOOP_BASE_PATH}" \
 	HADOOP_LOG_DIR="${HADOOP_BASE_PATH}/logs" \
 	HADOOP_USER="${HADOOP_USER}" \
 	PATH="${PATH}:${HADOOP_BASE_PATH}/bin:${HADOOP_BASE_PATH}/sbin:${JAVA_HOME}/bin" \
-	URL="http://archive.apache.org/dist/hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}.tar.gz"
+	HADOOP_VERSION="${HADOOP_VERSION}" \
+	HADOOP_URL="http://archive.apache.org/dist/hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}.tar.gz"
 
 RUN if [ -z "${HADOOP_VERSION}" ]; then \
 	echo "HADOOP_VERSION must be set." \
@@ -27,7 +28,7 @@ RUN if [ -z "${HADOOP_VERSION}" ]; then \
 RUN DEBIAN_FRONTEND="noninteractive" \
 	&& apt-get update \
 	&& apt-get -y upgrade \
-	&& apt-get install --assume-yes wget bash openssh-client openssh-server \
+	&& apt-get install --assume-yes netcat wget bash openssh-client openssh-server \
 	#
 	# Make sure JAVA_HOME and HADOOP_HOME is included for all bash users
 	#
@@ -71,8 +72,7 @@ RUN DEBIAN_FRONTEND="noninteractive" \
 	&& HOST_KEY="$(cat /etc/ssh/ssh_host_rsa_key.pub)" \
 	&& echo "127.0.0.1 ${HOST_KEY}" >> /home/"${HADOOP_USER}"/.ssh/known_hosts \
 	&& echo "localhost ${HOST_KEY}" >> /home/"${HADOOP_USER}"/.ssh/known_hosts \
-	&& echo "$HOSTNAME ${HOST_KEY}" >> /home/"${HADOOP_USER}"/.ssh/known_hosts \
-	&& echo "0.0.0.0 ${HOST_KEY}"   >> /home/"${HADOOP_USER}"/.ssh/known_hosts \
+	&& echo "* ${HOST_KEY}"   >> /home/"${HADOOP_USER}"/.ssh/known_hosts \
 	#
 	# Set up an SSH config file to specify the default preferences
 	#
@@ -80,6 +80,7 @@ RUN DEBIAN_FRONTEND="noninteractive" \
 	&& echo -e "\tUser ${HADOOP_USER}" >> /home/"${HADOOP_USER}"/.ssh/config \
 	&& echo -e "\tPubKeyAuthentication yes" >> /home/"${HADOOP_USER}"/.ssh/config \
 	&& echo -e "\tIdentityFile /home/${HADOOP_USER}/.ssh/id_rsa" >> /home/"${HADOOP_USER}"/.ssh/config \
+	&& echo -e "\tStrictHostKeyChecking no" >> /home/"${HADOOP_USER}"/.ssh/config \
 	#
 	# Make using the key file not require the use of a passphrase to access (if one was configured)
 	#
@@ -93,19 +94,14 @@ RUN DEBIAN_FRONTEND="noninteractive" \
 	&& chmod 0600 /home/"${HADOOP_USER}"/.ssh/* \
 	&& chmod 0640 /home/"${HADOOP_USER}"/.ssh/*.pub \
 	#
-	# Add these environment variables for hdadmin to use from bash
+	# Add these environment variables for hdadmin to use from bash and shell
 	#
 	&& echo "export HADOOP_HOME=${HADOOP_HOME}" >> /home/"${HADOOP_USER}"/.bashrc \
-	&& echo "export PATH=${PATH}" >> /home/"${HADOOP_USER}"/.bashrc \
-	&& echo "export JAVA_HOME=${JAVA_HOME}" >> /home/"${HADOOP_USER}"/.bashrc \
-	&& source /home/"${HADOOP_USER}"/.bashrc \
-	#
-	# Add these environment variables for hdadmin to use from any shell
-	#
 	&& echo "export HADOOP_HOME=${HADOOP_HOME}" >> /home/"${HADOOP_USER}"/.profile \
+	&& echo "export PATH=${PATH}" >> /home/"${HADOOP_USER}"/.bashrc \
 	&& echo "export PATH=${PATH}" >> /home/"${HADOOP_USER}"/.profile \
+	&& echo "export JAVA_HOME=${JAVA_HOME}" >> /home/"${HADOOP_USER}"/.bashrc \
 	&& echo "export JAVA_HOME=${JAVA_HOME}" >> /home/"${HADOOP_USER}"/.profile \
-	&& source /home/"${HADOOP_USER}"/.profile \
 	#
 	# As of v3.0.0 Hadoop does not support IPv6
 	#
@@ -119,8 +115,7 @@ RUN DEBIAN_FRONTEND="noninteractive" \
 	# -O- output payload to stdout, and use -q to supress all wget
 	# output, so only tar file is sent down the pipeline
 	#
-	&& echo "Downloading from $URL" \
-	&& wget -qO- "${URL}" \
+	&& wget -qO- "${HADOOP_URL}" \
 	#
 	# -f - specifies that the archive location is from the pipeline
 	#

@@ -1,0 +1,60 @@
+ARG SOURCE="bamcis/hadoop-debian-base:latest"
+
+FROM "${SOURCE}"
+MAINTAINER Michael Haken michael.haken@outlook.com
+
+ENV MASTER_NODE="localhost" \
+	REPLICATION_FACTOR="1" \
+	SLAVE_NODES="" \
+	ROLE="master"
+
+COPY core-site.xml "${HADOOP_HOME}/etc/hadoop"
+COPY hdfs-site.xml "${HADOOP_HOME}/etc/hadoop"
+COPY entrypoint.sh "/var/hadoop/entrypoint.sh"
+
+# Create HDFS folders	
+	#
+	# Fix the permissions on the files that were copied over
+	#
+RUN chown --recursive "${HADOOP_USER}":hadoop "${HADOOP_HOME}/etc/hadoop" \
+	&& chmod 0774 --recursive "${HADOOP_HOME}/etc/hadoop" \
+	&& mkdir -p /var/hadoop/data/namenode \
+	&& mkdir -p /var/hadoop/data/secondarynamenode \
+	&& mkdir -p /var/hadoop/data/datanode \
+	#
+	# Make hadadmin the owner of the data directories
+	#
+	&& chown --recursive "${HADOOP_USER}":hadoop /var/hadoop \
+	#
+	# Grant read only to all other users
+	#
+	&& chmod --recursive 0774 /var/hadoop \
+	&& su --login "${HADOOP_USER}" --command "hdfs namenode -format -nonInteractive"
+
+# Hdfs ports for <= 2.9.0
+# 8020 Namenode IPC metadata service
+# 9000 Namenode metadata service
+# 50010 Datanode data transfer
+# 50020 Datanode IPC metadata operations
+# 50070 Namenode web ui http
+# 50075 Datanode http
+# 50090 Secondary Namenode http checkpoint for Namenode metadata
+# 50091 Secondary Namenode
+# 50470 Namenode web ui https
+# 50475 Datanode https
+EXPOSE 8020 9000 50010 50020 50070 50075 50090 50091 50470 50475 
+
+# Hdfs ports for >= 3.0.0
+# 9820 Namenode IPC metadata service
+# 9000 Namenode metadata service
+# 9866 Datanode data transfer
+# 9867 Datanode IPC metadata operations
+# 9870 Namenode web ui http
+# 9864 Datanode http
+# 9871 Namenode web ui https
+# 9865 Datanode https
+# 9868 Secondary Namenode http checkpoint for Namenode metadata
+# 9869 Secondary Namenode
+EXPOSE 9000 9820 9864 9865 9866 9867 9868 9869 9870 9871
+
+ENTRYPOINT ["/var/hadoop/entrypoint.sh"]

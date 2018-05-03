@@ -16,7 +16,8 @@ ENV HADOOP_HOME="${HADOOP_BASE_PATH}" \
 	HADOOP_LOG_DIR="${HADOOP_BASE_PATH}/logs" \
 	HADOOP_USER="${HADOOP_USER}" \
 	PATH="${PATH}:${HADOOP_BASE_PATH}/bin:${HADOOP_BASE_PATH}/sbin" \
-	URL="http://archive.apache.org/dist/hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}-src.tar.gz"
+	HADOOP_VERSION="${HADOOP_VERSION}" \
+	HADOOP_URL="http://archive.apache.org/dist/hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}-src.tar.gz"
 
 RUN if [ -z "${HADOOP_VERSION}" ]; then \
 	echo "HADOOP_VERSION must be set." \
@@ -108,8 +109,7 @@ RUN apk update \
 	&& HOST_KEY="$(cat /etc/ssh/ssh_host_rsa_key.pub)" \
 	&& echo "127.0.0.1 ${HOST_KEY}" >> /home/"${HADOOP_USER}"/.ssh/known_hosts \
 	&& echo "localhost ${HOST_KEY}" >> /home/"${HADOOP_USER}"/.ssh/known_hosts \
-	&& echo "$HOSTNAME ${HOST_KEY}" >> /home/"${HADOOP_USER}"/.ssh/known_hosts \
-	&& echo "0.0.0.0 ${HOST_KEY}"   >> /home/"${HADOOP_USER}"/.ssh/known_hosts \
+	&& echo "* ${HOST_KEY}" >> /home/"${HADOOP_USER}"/.ssh/known_hosts \
 	#
 	# Set up an SSH config file to specify the default preferences
 	#
@@ -117,6 +117,7 @@ RUN apk update \
 	&& echo -e "\tUser ${HADOOP_USER}" >> /home/"${HADOOP_USER}"/.ssh/config \
 	&& echo -e "\tPubKeyAuthentication yes" >> /home/"${HADOOP_USER}"/.ssh/config \
 	&& echo -e "\tIdentityFile /home/${HADOOP_USER}/.ssh/id_rsa" >> /home/"${HADOOP_USER}"/.ssh/config \
+	&& echo -e "\tStrictHostKeyChecking no" >> /home/"${HADOOP_USER}"/.ssh/config \
 	#
 	# Make using the key file not require the use of a passphrase to access (if one was configured)
 	#
@@ -217,7 +218,7 @@ RUN apk --no-cache add --virtual .builddeps \
 	# -O- output payload to stdout, and use -q to supress all wget
 	# output, so only tar file is sent down the pipeline
 	#
-	&& wget -qO- "${URL}" \
+	&& wget -qO- "${HADOOP_URL}" \
     | tar -zx -f - --directory "/tmp/hadoop-src" --strip 1 \
 	&& /tmp/cleanup.sh "/tmp/hadoop-src" \
 	&& cd /tmp/hadoop-src \
