@@ -25,9 +25,9 @@ There are serveral different versions of the `hadoop-*` containers.
 
 ## Notes
 
-** Do not use anything but characters, numbers, and the hyphen when naming your containers in docker-compose. The master node
+* Do not use anything but characters, numbers, and the hyphen when naming your containers in docker-compose. The master node
 name is supplied to the slaves and itself as an environment variable. Hadoop will fail to start if that name contains something
 like an underscore `_` or a special character like `&`.
 
-** The distributed and pseudo distributed versions accept a runtime environment variable `HEAPSIZE`. This determines the specific
+* The distributed and pseudo distributed versions accept a runtime environment variable `HEAPSIZE`. This determines the specific
 maximum heap size for each node in the cluster when it starts.
