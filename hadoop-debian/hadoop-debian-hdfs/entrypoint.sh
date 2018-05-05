@@ -56,7 +56,10 @@ if [ ! -z "${SLAVE_NODES// }" ] || [ ${ROLE,,} = "slave" ]; then
 			# to the workers file and wait on each node to be accessible over ssh
 			while IFS=',' read -ra NODES; do
 				for NODE in "${NODES[@]}"; do
-					echo "${NODE}" >> "${HADOOP_HOME}/etc/hadoop/${FILE}"
+					
+					if ! grep -q -e "${NODE}" "${HADOOP_HOME}/etc/hadoop/${FILE}"; then
+						su-exec "${HADOOP_USER}" echo "${NODE}" >> "${HADOOP_HOME}/etc/hadoop/${FILE}"
+					fi
 
 					if ! grep -q -e "^${NODE}" "/home/${HADOOP_USER}/.ssh/known_hosts"; then
 						KEY=$(cat /etc/ssh/ssh_host_rsa_key.pub)
